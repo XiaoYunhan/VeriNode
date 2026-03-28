@@ -20,6 +20,7 @@ class OpenAIReferenceVerifier:
         claim_kind: ClaimKind,
         card_summary: str | None,
         evidence_spans: list[str],
+        relation_type: str,
         ref_label: str | None,
         raw_citation: str,
         resolved_title: str | None,
@@ -42,6 +43,7 @@ class OpenAIReferenceVerifier:
                                 claim_kind=claim_kind,
                                 card_summary=card_summary,
                                 evidence_spans=evidence_spans,
+                                relation_type=relation_type,
                                 ref_label=ref_label,
                                 raw_citation=raw_citation,
                                 resolved_title=resolved_title,
@@ -67,6 +69,7 @@ class OpenAIReferenceVerifier:
         claim_kind: ClaimKind,
         card_summary: str | None,
         evidence_spans: list[str],
+        relation_type: str,
         ref_label: str | None,
         raw_citation: str,
         resolved_title: str | None,
@@ -82,6 +85,7 @@ Card summary: {card_summary or "none"}
 Document evidence spans:
 {evidence_text}
 
+Relation type: {relation_type}
 Reference label: {ref_label or "none"}
 Raw citation: {raw_citation}
 Resolved title: {resolved_title or "none"}

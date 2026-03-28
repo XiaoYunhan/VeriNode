@@ -150,6 +150,17 @@ def test_web_evidence_job_persists_tinyfish_run_and_artifact(tmp_path: Path) -> 
         [
             WebEvidenceAcquisition(
                 status=TinyFishRunStatus.COMPLETED,
+                goal="Inspect the citation page during verification.",
+                run_id="run-verify",
+                source_url="https://arxiv.org/abs/quant-ph/0005055",
+                page_title="Quantum Amplitude Amplification and Estimation",
+                evidence_snippet="The paper presents amplitude estimation with quadratic speedup.",
+                reasoning_summary="The verification step captured the canonical source page.",
+                screenshot_useful=True,
+                screenshot_data_uri=ONE_PIXEL_PNG,
+            ),
+            WebEvidenceAcquisition(
+                status=TinyFishRunStatus.COMPLETED,
                 goal="Inspect the citation page.",
                 run_id="run-123",
                 source_url="https://arxiv.org/abs/quant-ph/0005055",
@@ -171,16 +182,25 @@ def test_web_evidence_job_persists_tinyfish_run_and_artifact(tmp_path: Path) -> 
 
         card = client.get(f"/api/cards/{card_id}").json()
         assert card["stage"] == "web_evidence_acquired"
-        assert len(card["tinyfish_runs"]) == 1
-        assert card["tinyfish_runs"][0]["status"] == "completed"
-        assert card["tinyfish_runs"][0]["artifact_path"].startswith("artifacts/tinyfish/")
+        assert len(card["tinyfish_runs"]) >= 2
+        assert card["tinyfish_runs"][-1]["status"] == "completed"
+        assert card["tinyfish_runs"][-1]["artifact_path"].startswith("artifacts/tinyfish/")
         assert any(span["source_kind"] == "tinyfish" for span in card["evidence_spans"])
-        assert (data_dir / card["tinyfish_runs"][0]["artifact_path"]).exists()
+        assert (data_dir / card["tinyfish_runs"][-1]["artifact_path"]).exists()
 
 
 def test_failed_web_evidence_job_is_retryable(tmp_path: Path) -> None:
     acquirer = ScriptedWebEvidenceAcquirer(
         [
+            WebEvidenceAcquisition(
+                status=TinyFishRunStatus.COMPLETED,
+                goal="Inspect the citation page during verification.",
+                run_id="run-verify",
+                source_url="https://arxiv.org/abs/quant-ph/0005055",
+                evidence_snippet="Initial verification captured baseline evidence.",
+                reasoning_summary="Verification succeeded.",
+                screenshot_useful=False,
+            ),
             WebEvidenceAcquisition(
                 status=TinyFishRunStatus.FAILED,
                 goal="Inspect the citation page.",
@@ -195,7 +215,8 @@ def test_failed_web_evidence_job_is_retryable(tmp_path: Path) -> None:
                 source_url="https://arxiv.org/abs/quant-ph/0005055",
                 evidence_snippet="Recovered evidence after retry.",
                 reasoning_summary="Retry succeeded.",
-                screenshot_useful=False,
+                screenshot_useful=True,
+                screenshot_data_uri=ONE_PIXEL_PNG,
             ),
         ]
     )
@@ -214,3 +235,40 @@ def test_failed_web_evidence_job_is_retryable(tmp_path: Path) -> None:
         card = client.get(f"/api/cards/{card_id}").json()
         assert card["stage"] == "web_evidence_acquired"
         assert card["tinyfish_runs"][-1]["status"] == "completed"
+
+
+def test_completed_web_evidence_without_screenshot_is_blocked(tmp_path: Path) -> None:
+    acquirer = ScriptedWebEvidenceAcquirer(
+        [
+            WebEvidenceAcquisition(
+                status=TinyFishRunStatus.COMPLETED,
+                goal="Inspect the citation page during verification.",
+                run_id="run-verify",
+                source_url="https://arxiv.org/abs/quant-ph/0005055",
+                evidence_snippet="Verification found the citation page.",
+                reasoning_summary="The verification step visited the source page.",
+                screenshot_useful=False,
+            ),
+            WebEvidenceAcquisition(
+                status=TinyFishRunStatus.COMPLETED,
+                goal="Inspect the citation page.",
+                run_id="run-no-screenshot",
+                source_url="https://arxiv.org/abs/quant-ph/0005055",
+                evidence_snippet="The page mentions amplitude estimation.",
+                reasoning_summary="TinyFish reached the page but no screenshot artifact was returned.",
+                screenshot_useful=False,
+            ),
+        ]
+    )
+
+    with client_for(tmp_path, acquirer=acquirer) as (client, _data_dir):
+        card_id = upload_extract_and_verify(client)
+
+        job = client.post(f"/api/cards/{card_id}/web-evidence").json()
+        failed = wait_for_job(client, job["id"], expected_status="failed")
+        assert "screenshot" in failed["error_message"].lower()
+
+        card = client.get(f"/api/cards/{card_id}").json()
+        assert card["stage"] == "failed"
+        assert card["tinyfish_runs"][-1]["status"] == "failed"
+        assert "screenshot" in card["tinyfish_runs"][-1]["result_summary"].lower()

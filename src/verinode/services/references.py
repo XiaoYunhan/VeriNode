@@ -32,6 +32,17 @@ def normalize_reference(
     }
 
 
+def build_evidence_target_url(
+    source_url: str | None,
+    *,
+    raw_citation: str | None = None,
+) -> str | None:
+    arxiv_id = _extract_arxiv_id(source_url or "") or _extract_arxiv_id(raw_citation or "")
+    if arxiv_id:
+        return _pdf_url_from_arxiv(arxiv_id)
+    return source_url
+
+
 def _extract_doi(text: str) -> str | None:
     match = DOI_PATTERN.search(text)
     return match.group(1) if match else None
@@ -58,3 +69,9 @@ def _url_from_arxiv(arxiv_id: str | None) -> str | None:
     if not arxiv_id:
         return None
     return f"https://arxiv.org/abs/{arxiv_id}"
+
+
+def _pdf_url_from_arxiv(arxiv_id: str | None) -> str | None:
+    if not arxiv_id:
+        return None
+    return f"https://arxiv.org/pdf/{arxiv_id}.pdf"

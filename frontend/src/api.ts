@@ -53,6 +53,21 @@ export function listDocuments(): Promise<DocumentRecord[]> {
   return requestJson<DocumentRecord[]>("/api/documents");
 }
 
+export async function deleteDocument(documentId: string): Promise<void> {
+  const response = await fetch(apiUrl(`/api/documents/${documentId}`), {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    let payload: ApiError = {};
+    try {
+      payload = (await response.json()) as ApiError;
+    } catch {
+      throw new Error(`Delete failed with status ${response.status}`);
+    }
+    throw new Error(readErrorMessage(payload, `Delete failed with status ${response.status}`));
+  }
+}
+
 export async function uploadDocument(file: File): Promise<DocumentRecord> {
   const formData = new FormData();
   formData.append("file", file);
@@ -89,6 +104,12 @@ export function enqueueExtract(documentId: string): Promise<JobRecord> {
 
 export function enqueueVerify(cardId: string): Promise<JobRecord> {
   return requestJson<JobRecord>(`/api/cards/${cardId}/verify`, {
+    method: "POST",
+  });
+}
+
+export function enqueueSandbox(cardId: string): Promise<JobRecord> {
+  return requestJson<JobRecord>(`/api/cards/${cardId}/sandbox`, {
     method: "POST",
   });
 }

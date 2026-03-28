@@ -9,8 +9,10 @@ from verinode.database import Database
 from verinode.extractors.base import ClaimExtractor
 from verinode.models import Document, Job, JobStatus, JobType
 from verinode.services.extraction import run_document_extraction
+from verinode.services.sandbox import run_card_sandbox
 from verinode.services.verification import run_card_verification
 from verinode.services.web_evidence import run_card_web_evidence
+from verinode.sandboxes.base import SandboxExecutor
 from verinode.verifiers.base import ReferenceVerifier
 from verinode.services.jobs import mark_job_failed, mark_job_running, mark_job_succeeded
 
@@ -24,13 +26,15 @@ class JobRunner:
         max_concurrent_jobs: int,
         claim_extractor: ClaimExtractor,
         reference_verifier: ReferenceVerifier,
-        web_evidence_acquirer: WebEvidenceAcquirer,
+        web_evidence_acquirer: WebEvidenceAcquirer | None,
+        sandbox_executor: SandboxExecutor | None,
     ) -> None:
         self._database = database
         self._data_dir = data_dir
         self._claim_extractor = claim_extractor
         self._reference_verifier = reference_verifier
         self._web_evidence_acquirer = web_evidence_acquirer
+        self._sandbox_executor = sandbox_executor
         self._executor = ThreadPoolExecutor(max_workers=max_concurrent_jobs)
         self._semaphore = BoundedSemaphore(max_concurrent_jobs)
 
@@ -75,17 +79,32 @@ class JobRunner:
                     raise ValueError("job_missing_claim_card")
                 run_card_verification(
                     session,
+                    data_dir=self._data_dir,
                     card=job.claim_card,
                     verifier=self._reference_verifier,
+                    web_evidence_acquirer=self._web_evidence_acquirer,
                 )
             elif job.job_type is JobType.WEB_EVIDENCE:
                 if job.claim_card is None:
                     raise ValueError("job_missing_claim_card")
+                if self._web_evidence_acquirer is None:
+                    raise ValueError("tinyfish_disabled")
                 run_card_web_evidence(
                     session,
                     data_dir=self._data_dir,
                     card=job.claim_card,
                     acquirer=self._web_evidence_acquirer,
+                )
+            elif job.job_type is JobType.SANDBOX:
+                if job.claim_card is None:
+                    raise ValueError("job_missing_claim_card")
+                if self._sandbox_executor is None:
+                    raise ValueError("code_sandbox_disabled")
+                run_card_sandbox(
+                    session,
+                    data_dir=self._data_dir,
+                    card=job.claim_card,
+                    executor=self._sandbox_executor,
                 )
             else:
                 raise ValueError(f"unsupported_job_type:{job.job_type}")

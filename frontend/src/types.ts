@@ -17,6 +17,8 @@ export type ClaimKind =
   | "result_claim"
   | "code_math_artifact";
 
+export type ReferenceMode = "declared_reference" | "internet_lookup";
+
 export type JobStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
 
 export type EvidenceSourceKind =
@@ -40,6 +42,8 @@ export type TinyFishRunStatus =
   | "completed"
   | "failed"
   | "cancelled";
+
+export type SandboxRunStatus = "completed" | "failed";
 
 export interface ApiErrorDetail {
   code: string;
@@ -66,6 +70,9 @@ export interface ClaimCardRecord {
   document_id: string;
   card_type: "claim" | "code" | "math";
   claim_kind: ClaimKind;
+  reference_mode: ReferenceMode;
+  has_declared_reference: boolean;
+  declared_reference_count: number;
   claim_text: string | null;
   stage: CardStage;
   page_label: string | null;
@@ -120,11 +127,20 @@ export interface TinyFishRunRecord {
   reference: ReferenceRecord;
 }
 
+export interface SandboxRunRecord {
+  id: string;
+  status: SandboxRunStatus;
+  summary: string;
+  artifact_path: string | null;
+  created_at: string;
+}
+
 export interface ClaimCardDetailRecord extends ClaimCardRecord {
   evidence_spans: EvidenceSpanRecord[];
   references: ClaimReferenceRecord[];
   verification_results: VerificationResultRecord[];
   tinyfish_runs: TinyFishRunRecord[];
+  sandbox_runs: SandboxRunRecord[];
 }
 
 export interface JobRecord {
@@ -137,4 +153,3 @@ export interface JobRecord {
   created_at: string;
   updated_at: string;
 }
-

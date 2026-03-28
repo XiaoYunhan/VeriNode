@@ -59,9 +59,41 @@ def list_document_cards(session: Session, document_id: str) -> list[ClaimCard]:
         .where(ClaimCard.document_id == document_id)
         .order_by(ClaimCard.created_at.asc())
     )
-    return list(session.scalars(statement))
+    cards = list(session.scalars(statement))
+    return sorted(
+        cards,
+        key=lambda card: (not card.has_declared_reference, card.created_at),
+    )
 
 
 def list_documents(session: Session) -> list[Document]:
     statement = select(Document).order_by(Document.created_at.desc())
     return list(session.scalars(statement))
+
+
+def delete_document(
+    session: Session,
+    *,
+    data_dir: Path,
+    document: Document,
+) -> None:
+    artifact_paths = [document.storage_path]
+    for card in document.claim_cards:
+        artifact_paths.extend(
+            run.artifact_path
+            for run in card.tinyfish_runs
+            if run.artifact_path
+        )
+        artifact_paths.extend(
+            run.artifact_path
+            for run in card.sandbox_runs
+            if run.artifact_path
+        )
+
+    session.delete(document)
+    session.commit()
+
+    for relative_path in artifact_paths:
+        target = data_dir / relative_path
+        if target.exists():
+            target.unlink()

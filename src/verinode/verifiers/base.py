@@ -15,10 +15,10 @@ class ReferenceVerifier(Protocol):
         claim_kind: ClaimKind,
         card_summary: str | None,
         evidence_spans: list[str],
+        relation_type: str,
         ref_label: str | None,
         raw_citation: str,
         resolved_title: str | None,
         resolved_url: str | None,
         resolved_doi: str | None,
     ) -> ReferenceVerificationResult: ...
-

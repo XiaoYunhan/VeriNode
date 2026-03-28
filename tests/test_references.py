@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from verinode.services.references import normalize_reference
+from verinode.services.references import build_evidence_target_url, normalize_reference
 
 
 def test_normalize_reference_builds_doi_url_when_missing() -> None:
@@ -25,3 +25,12 @@ def test_normalize_reference_builds_arxiv_url_when_missing() -> None:
 
     assert normalized["resolved_doi"] is None
     assert normalized["resolved_url"] == "https://arxiv.org/abs/quant-ph/0005055"
+
+
+def test_build_evidence_target_url_prefers_arxiv_pdf() -> None:
+    target = build_evidence_target_url(
+        "https://arxiv.org/abs/quant-ph/0005055",
+        raw_citation="Quantum Amplitude Amplification and Estimation. arXiv:quant-ph/0005055",
+    )
+
+    assert target == "https://arxiv.org/pdf/quant-ph/0005055.pdf"

@@ -35,6 +35,11 @@ class ClaimKind(StrEnum):
     CODE_MATH_ARTIFACT = "code_math_artifact"
 
 
+class ReferenceMode(StrEnum):
+    DECLARED_REFERENCE = "declared_reference"
+    INTERNET_LOOKUP = "internet_lookup"
+
+
 class EvidenceSourceKind(StrEnum):
     DOCUMENT = "document"
     REFERENCE = "reference"
@@ -89,6 +94,11 @@ class TinyFishRunStatus(StrEnum):
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
+
+
+class SandboxRunStatus(StrEnum):
+    COMPLETED = "completed"
+    FAILED = "failed"
 
 
 class Document(Base):
@@ -163,11 +173,33 @@ class ClaimCard(Base):
         back_populates="claim_card",
         cascade="all, delete-orphan",
     )
+    sandbox_runs: Mapped[list["SandboxRunRecord"]] = relationship(
+        back_populates="claim_card",
+        cascade="all, delete-orphan",
+    )
     jobs: Mapped[list["Job"]] = relationship(back_populates="claim_card")
 
     @property
     def references(self) -> list["ClaimReference"]:
         return self.claim_references
+
+    @property
+    def declared_reference_count(self) -> int:
+        return sum(
+            1
+            for link in self.claim_references
+            if link.relation_type != "internet_lookup"
+        )
+
+    @property
+    def has_declared_reference(self) -> bool:
+        return self.declared_reference_count > 0
+
+    @property
+    def reference_mode(self) -> ReferenceMode:
+        if self.has_declared_reference:
+            return ReferenceMode.DECLARED_REFERENCE
+        return ReferenceMode.INTERNET_LOOKUP
 
 
 class EvidenceSpan(Base):
@@ -267,6 +299,21 @@ class TinyFishRunRecord(Base):
 
     claim_card: Mapped[ClaimCard] = relationship(back_populates="tinyfish_runs")
     reference: Mapped[ReferenceRecord] = relationship(back_populates="tinyfish_runs")
+
+
+class SandboxRunRecord(Base):
+    __tablename__ = "sandbox_runs"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    claim_card_id: Mapped[str] = mapped_column(ForeignKey("claim_cards.id"), index=True)
+    status: Mapped[SandboxRunStatus] = mapped_column(
+        Enum(SandboxRunStatus, native_enum=False),
+    )
+    summary: Mapped[str] = mapped_column(Text)
+    artifact_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    claim_card: Mapped[ClaimCard] = relationship(back_populates="sandbox_runs")
 
 
 class Job(Base):

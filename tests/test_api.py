@@ -8,6 +8,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from verinode.database import Database
 from verinode.extraction_types import (
     ExtractedClaimCard,
     ExtractedEvidenceSpan,
@@ -15,6 +16,9 @@ from verinode.extraction_types import (
     ExtractionResult,
 )
 from verinode.main import create_app
+from verinode.models import JobType
+from verinode.services.documents import create_document
+from verinode.services.jobs import create_document_job
 from verinode.settings import Settings
 
 
@@ -70,6 +74,18 @@ def sample_extraction_result() -> ExtractionResult:
                         raw_citation="Smith et al. 2024",
                         resolved_title="Prior treatment study",
                         resolved_url="https://example.com/ref-1",
+                    )
+                ],
+            ),
+            ExtractedClaimCard(
+                claim_text="The system remained stable across five repeated trials.",
+                summary="Stability held across repeated trials.",
+                page_label="3",
+                section_label="Discussion",
+                evidence_spans=[
+                    ExtractedEvidenceSpan(
+                        text="All five repeated runs converged to the same operating range.",
+                        page_label="3",
                     )
                 ],
             )
@@ -150,6 +166,19 @@ def test_upload_document_persists_metadata_and_file(tmp_path: Path) -> None:
         assert listed_documents[0]["id"] == payload["id"]
 
 
+def test_delete_document_removes_record_and_uploaded_file(tmp_path: Path) -> None:
+    extractor = ScriptedExtractor([sample_extraction_result()])
+    with client_for(tmp_path, extractor) as (client, settings):
+        document = upload_markdown_document(client)
+        uploaded_path = settings.app_data_dir / document["storage_path"]
+        assert uploaded_path.exists()
+
+        response = client.delete(f"/api/documents/{document['id']}")
+        assert response.status_code == 204
+        assert not uploaded_path.exists()
+        assert client.get("/api/documents").json() == []
+
+
 def test_extract_job_persists_cards_evidence_and_references(tmp_path: Path) -> None:
     extractor = ScriptedExtractor([sample_extraction_result()])
     with client_for(tmp_path, extractor) as (client, _settings):
@@ -164,8 +193,12 @@ def test_extract_job_persists_cards_evidence_and_references(tmp_path: Path) -> N
         assert document_after["title"] == "Sample Paper"
 
         cards = client.get(f"/api/documents/{document['id']}/cards").json()
-        assert len(cards) == 1
+        assert len(cards) == 2
         assert cards[0]["stage"] == "extracted"
+        assert cards[0]["reference_mode"] == "declared_reference"
+        assert cards[0]["has_declared_reference"] is True
+        assert cards[1]["reference_mode"] == "internet_lookup"
+        assert cards[1]["has_declared_reference"] is False
 
         card = client.get(f"/api/cards/{cards[0]['id']}").json()
         assert card["summary"] == "Treatment improves accuracy."
@@ -226,3 +259,40 @@ def test_failed_extract_job_is_retryable(tmp_path: Path) -> None:
 
         document_after_retry = client.get(f"/api/documents/{document['id']}").json()
         assert document_after_retry["status"] == "ready"
+
+
+def test_startup_recovers_interrupted_extract_job_and_allows_rerun(tmp_path: Path) -> None:
+    settings = make_settings(tmp_path)
+    database = Database(settings.database_url)
+    database.create_schema()
+    session = database.session()
+    try:
+        document = create_document(
+            session,
+            uploads_dir=settings.uploads_dir,
+            filename="paper.md",
+            contents=b"# Sample claim\n",
+        )
+        job = create_document_job(
+            session,
+            document=document,
+            job_type=JobType.EXTRACT_CLAIMS,
+        )
+        document_id = document.id
+        job_id = job.id
+    finally:
+        session.close()
+
+    extractor = ScriptedExtractor([sample_extraction_result()])
+    with TestClient(create_app(settings, claim_extractor=extractor)) as client:
+        recovered_job = client.get(f"/api/jobs/{job_id}")
+        assert recovered_job.status_code == 200
+        assert recovered_job.json()["status"] == "failed"
+        assert "interrupted" in recovered_job.json()["error_message"].lower()
+
+        document_after_recovery = client.get(f"/api/documents/{document_id}").json()
+        assert document_after_recovery["status"] == "failed"
+
+        rerun = client.post(f"/api/documents/{document_id}/extract")
+        assert rerun.status_code == 202
+        wait_for_job(client, rerun.json()["id"], expected_status="succeeded")

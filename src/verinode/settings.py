@@ -33,7 +33,7 @@ class Settings(BaseSettings):
         validation_alias="ENABLE_EXTERNAL_SEARCH",
     )
     enable_code_sandbox: bool = Field(
-        default=False,
+        default=True,
         validation_alias="ENABLE_CODE_SANDBOX",
     )
     enable_tinyfish: bool = Field(default=True, validation_alias="ENABLE_TINYFISH")

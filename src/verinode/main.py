@@ -15,11 +15,18 @@ from verinode.clients.tinyfish import TinyFishClient
 from verinode.database import Database
 from verinode.extractors.base import ClaimExtractor
 from verinode.extractors.openai import OpenAIClaimExtractor
-from verinode.models import ClaimCard, ClaimReference, Document, Job, JobStatus, JobType, ReferenceRecord
+from verinode.models import CardType, ClaimCard, Document, Job, JobStatus, JobType
+from verinode.sandboxes.base import SandboxExecutor
+from verinode.sandboxes.openai import OpenAISandboxExecutor
 from verinode.schemas import ClaimCardDetailRead, ClaimCardRead, DocumentRead, JobRead
-from verinode.services.documents import create_document, list_document_cards, list_documents
+from verinode.services.documents import create_document, delete_document, list_document_cards, list_documents
 from verinode.services.job_runner import JobRunner
-from verinode.services.jobs import create_card_job, create_document_job, retry_job
+from verinode.services.jobs import (
+    create_card_job,
+    create_document_job,
+    recover_interrupted_jobs,
+    retry_job,
+)
 from verinode.settings import Settings
 from verinode.verifiers.base import ReferenceVerifier
 from verinode.verifiers.openai import OpenAIReferenceVerifier
@@ -35,6 +42,7 @@ def create_app(
     claim_extractor: ClaimExtractor | None = None,
     reference_verifier: ReferenceVerifier | None = None,
     web_evidence_acquirer: WebEvidenceAcquirer | None = None,
+    sandbox_executor: SandboxExecutor | None = None,
 ) -> FastAPI:
     app_settings = settings or Settings()
     app_settings.app_data_dir.mkdir(parents=True, exist_ok=True)
@@ -49,11 +57,19 @@ def create_app(
         api_key=app_settings.openai_api_key,
         model=app_settings.openai_model_search,
     )
-    tinyfish_client = TinyFishClient(
-        api_key=app_settings.tinyfish_api_key,
-        base_url=app_settings.tinyfish_base_url,
-    )
-    acquirer = web_evidence_acquirer or TinyFishWebEvidenceAcquirer(client=tinyfish_client)
+    acquirer = web_evidence_acquirer
+    if app_settings.enable_tinyfish and acquirer is None:
+        tinyfish_client = TinyFishClient(
+            api_key=app_settings.tinyfish_api_key,
+            base_url=app_settings.tinyfish_base_url,
+        )
+        acquirer = TinyFishWebEvidenceAcquirer(client=tinyfish_client)
+    sandbox = sandbox_executor
+    if app_settings.enable_code_sandbox and sandbox is None:
+        sandbox = OpenAISandboxExecutor(
+            api_key=app_settings.openai_api_key,
+            model=app_settings.openai_model_sandbox,
+        )
     job_runner = JobRunner(
         database=database,
         data_dir=app_settings.app_data_dir,
@@ -61,11 +77,17 @@ def create_app(
         claim_extractor=extractor,
         reference_verifier=verifier,
         web_evidence_acquirer=acquirer,
+        sandbox_executor=sandbox,
     )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         database.create_schema()
+        recovery_session = database.session()
+        try:
+            recover_interrupted_jobs(recovery_session)
+        finally:
+            recovery_session.close()
         app.state.settings = app_settings
         app.state.db = database
         app.state.job_runner = job_runner
@@ -143,6 +165,16 @@ def create_app(
             )
         return document
 
+    @app.delete("/api/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
+    def remove_document(document_id: str, session: Session = Depends(get_session)) -> None:
+        document = session.get(Document, document_id)
+        if document is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=error_detail("document_not_found", "Document not found."),
+            )
+        delete_document(session, data_dir=app_settings.app_data_dir, document=document)
+
     @app.get("/api/documents/{document_id}/cards", response_model=list[ClaimCardRead])
     def get_document_cards(
         document_id: str,
@@ -211,16 +243,12 @@ def create_app(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=error_detail("card_not_found", "Card not found."),
             )
-
-        has_reference = session.scalar(
-            select(ClaimReference).where(ClaimReference.claim_card_id == card_id)
-        )
-        if has_reference is None:
+        if card.card_type in {CardType.CODE, CardType.MATH}:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=error_detail(
-                    "card_has_no_references",
-                    "Cards without references cannot be verified yet.",
+                    "code_math_requires_sandbox",
+                    "Code and math claims should use sandbox simulation instead of reference verification.",
                 ),
             )
 
@@ -249,6 +277,63 @@ def create_app(
         return job
 
     @app.post(
+        "/api/cards/{card_id}/sandbox",
+        response_model=JobRead,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def enqueue_sandbox_job(
+        card_id: str,
+        session: Session = Depends(get_session),
+    ) -> Job:
+        if not app_settings.enable_code_sandbox:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=error_detail(
+                    "code_sandbox_disabled",
+                    "Sandbox simulation is disabled in the current environment.",
+                ),
+            )
+
+        card = session.get(ClaimCard, card_id)
+        if card is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=error_detail("card_not_found", "Card not found."),
+            )
+        if card.card_type not in {CardType.CODE, CardType.MATH}:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=error_detail(
+                    "card_not_sandboxable",
+                    "Only code and math claims can use sandbox simulation.",
+                ),
+            )
+
+        existing_job = session.scalar(
+            select(Job).where(
+                Job.claim_card_id == card_id,
+                Job.job_type == JobType.SANDBOX,
+                Job.status.in_([JobStatus.QUEUED, JobStatus.RUNNING]),
+            )
+        )
+        if existing_job is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=error_detail(
+                    "sandbox_job_exists",
+                    "A sandbox job is already queued or running for this claim.",
+                ),
+            )
+
+        job = create_card_job(
+            session,
+            claim_card=card,
+            job_type=JobType.SANDBOX,
+        )
+        job_runner.enqueue(job.id)
+        return job
+
+    @app.post(
         "/api/cards/{card_id}/web-evidence",
         response_model=JobRead,
         status_code=status.HTTP_202_ACCEPTED,
@@ -271,23 +356,6 @@ def create_app(
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=error_detail("card_not_found", "Card not found."),
-            )
-
-        has_resolved_reference = session.scalar(
-            select(ClaimReference)
-            .join(ReferenceRecord, ClaimReference.reference_id == ReferenceRecord.id)
-            .where(
-                ClaimReference.claim_card_id == card_id,
-                ReferenceRecord.resolved_url.is_not(None),
-            )
-        )
-        if has_resolved_reference is None:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=error_detail(
-                    "card_has_no_resolved_references",
-                    "Cards need at least one resolved reference URL for TinyFish evidence acquisition.",
-                ),
             )
 
         existing_job = session.scalar(

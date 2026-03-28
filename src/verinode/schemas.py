@@ -13,7 +13,9 @@ from verinode.models import (
     FileType,
     JobStatus,
     JobType,
+    ReferenceMode,
     ReferenceExistenceVerdict,
+    SandboxRunStatus,
     SupportVerdict,
     TinyFishRunStatus,
 )
@@ -39,6 +41,9 @@ class ClaimCardRead(ApiModel):
     document_id: str
     card_type: CardType
     claim_kind: ClaimKind
+    reference_mode: ReferenceMode
+    has_declared_reference: bool
+    declared_reference_count: int
     claim_text: str | None
     stage: CardStage
     page_label: str | None
@@ -93,11 +98,20 @@ class TinyFishRunRead(ApiModel):
     reference: ReferenceRead
 
 
+class SandboxRunRead(ApiModel):
+    id: str
+    status: SandboxRunStatus
+    summary: str
+    artifact_path: str | None
+    created_at: datetime
+
+
 class ClaimCardDetailRead(ClaimCardRead):
     evidence_spans: list[EvidenceSpanRead]
     references: list[ClaimReferenceRead]
     verification_results: list[VerificationResultRead]
     tinyfish_runs: list[TinyFishRunRead]
+    sandbox_runs: list[SandboxRunRead]
 
 
 class JobRead(ApiModel):

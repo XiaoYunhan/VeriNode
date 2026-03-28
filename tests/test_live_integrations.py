@@ -150,6 +150,7 @@ def test_openai_reference_verifier_smoke_on_qmc_citation() -> None:
             "Classical Monte Carlo methods require O(1/epsilon^2) samples.",
             "Quantum Amplitude Estimation reduces this complexity to O(1/epsilon).",
         ],
+        relation_type="cites",
         ref_label=None,
         raw_citation=(
             "Quantum Amplitude Amplification and Estimation. Brassard et al (2000). "
