@@ -1,0 +1,45 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-sans: "Avenir Next", "Segoe UI", sans-serif;
+  --font-serif: "Iowan Old Style", "Palatino Linotype", serif;
+}
+
+@layer base {
+  :root {
+    color: #1e2024;
+    color-scheme: light;
+    background:
+      radial-gradient(circle at top left, rgba(255, 226, 189, 0.52), transparent 28%),
+      radial-gradient(circle at top right, rgba(143, 194, 198, 0.34), transparent 26%),
+      linear-gradient(180deg, #faf4ea 0%, #f2ece2 52%, #ebe3d7 100%);
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    @apply min-h-screen bg-transparent font-sans text-[#1e2024];
+    margin: 0;
+  }
+
+  button,
+  input,
+  textarea,
+  select {
+    font: inherit;
+  }
+
+  a {
+    @apply text-[#0d5b63] transition hover:underline;
+  }
+
+  #root {
+    @apply min-h-screen;
+  }
+}
